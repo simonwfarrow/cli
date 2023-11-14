@@ -11,7 +11,9 @@ import com.structurizr.export.plantuml.C4PlantUMLExporter;
 import com.structurizr.export.plantuml.StructurizrPlantUMLExporter;
 import com.structurizr.export.websequencediagrams.WebSequenceDiagramsExporter;
 import com.structurizr.util.WorkspaceUtils;
+import com.structurizr.view.ModelView;
 import com.structurizr.view.ThemeUtils;
+import com.structurizr.view.View;
 import io.github.goto1134.structurizr.export.d2.D2Exporter;
 import org.apache.commons.cli.*;
 import org.apache.commons.logging.Log;
@@ -78,6 +80,10 @@ public class ExportCommand extends AbstractCommand {
         option.setRequired(false);
         options.addOption(option);
 
+        option = new Option("m", "merge", true, "Path to workspace file to merge layouts from");
+        option.setRequired(false);
+        options.addOption(option);
+
         CommandLineParser commandLineParser = new DefaultParser();
         HelpFormatter formatter = new HelpFormatter();
 
@@ -86,6 +92,8 @@ public class ExportCommand extends AbstractCommand {
         long workspaceId = 1;
         String format = "";
         String outputPath = null;
+        String mergePathAsString = null;
+        File mergePath = null;
 
         try {
             CommandLine cmd = commandLineParser.parse(options, args);
@@ -93,6 +101,7 @@ public class ExportCommand extends AbstractCommand {
             workspacePathAsString = cmd.getOptionValue("workspace");
             format = cmd.getOptionValue("format");
             outputPath = cmd.getOptionValue("output");
+            mergePathAsString = cmd.getOptionValue("merge");
 
         } catch (ParseException e) {
             log.error(e.getMessage());
@@ -105,6 +114,7 @@ public class ExportCommand extends AbstractCommand {
         log.info("Exporting workspace from " + workspacePathAsString);
 
         Workspace workspace = loadWorkspace(workspacePathAsString);
+        Workspace mergeWorkspace;
 
         if (workspacePathAsString.startsWith("http://") || workspacePathAsString.startsWith("https://")) {
             workspacePath = new File(".");
@@ -113,6 +123,20 @@ public class ExportCommand extends AbstractCommand {
         }
 
         workspaceId = workspace.getId();
+
+        try {
+            if (mergePathAsString != null) {
+                if (mergePathAsString.endsWith(".json")) {
+                    mergePath = new File(mergePathAsString);
+                    mergeWorkspace = WorkspaceUtils.loadWorkspaceFromJson(mergePath);
+                    mergeWorkspaceViews(mergeWorkspace, workspace);
+                } else {
+                    log.error("Merge file must be in JSON format");
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            log.error("The source file to merge from cannot be found, skipping merge operation");
+        }
 
         if (!JSON_FORMAT.equalsIgnoreCase(format)) {
             // only inline the theme amd create default views if the user wants a diagram export
@@ -123,7 +147,7 @@ public class ExportCommand extends AbstractCommand {
         if (outputPath == null) {
             outputPath = new File(workspacePath.getCanonicalPath()).getParent();
         }
-        
+
         File outputDir = new File(outputPath);
         outputDir.mkdirs();
 
@@ -237,6 +261,19 @@ public class ExportCommand extends AbstractCommand {
         writer.write(content);
         writer.flush();
         writer.close();
+    }
+
+    private void mergeWorkspaceViews(Workspace source, Workspace output) {
+        output.getViews().getViews().stream().forEach(view -> {
+            View existingLayout = source.getViews().getViewWithKey(view.getKey());
+            if (existingLayout!=null) {
+                ((ModelView) view).setMergeFromRemote(true); //required to allow merge to happen
+                ((ModelView) view).disableAutomaticLayout(); //remove auto layout
+                ((ModelView) view).setDimensions(null); //null dimensions to force copy from source
+                ((ModelView) view).setPaperSize(null); //null paper size to force copy from source
+            }
+        });
+        output.getViews().copyLayoutInformationFrom(source.getViews());
     }
 
 }
